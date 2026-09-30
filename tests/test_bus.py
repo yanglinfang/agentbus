@@ -187,3 +187,25 @@ def test_wake_without_registration_is_an_error(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path); main(["init"])
     assert main(["wake", "nobody"]) == 2
     assert "no wake command registered" in capsys.readouterr().err
+
+
+def test_fresh_hook_identity_does_not_replay_history(tmp_path, monkeypatch, capsys):
+    import io
+    monkeypatch.chdir(tmp_path); main(["init"]); monkeypatch.delenv("ABUS_AGENT", raising=False)
+    for i in range(5):
+        main(["--as", "codex", "send", "*", f"old chatter {i}"])
+    main(["--as", "codex", "ask", "*", "still open for everyone"]); capsys.readouterr()
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "fresh01", "cwd": str(tmp_path)})))
+    assert main(["hook-run", "claude"]) == 0
+    out = capsys.readouterr().out
+    assert "old chatter" not in out and "still open for everyone" in out
+
+
+def test_bind_session_pins_identity(tmp_path, monkeypatch, capsys):
+    import io
+    monkeypatch.chdir(tmp_path); main(["init"]); monkeypatch.delenv("ABUS_AGENT", raising=False)
+    assert main(["bind-session", "0970", "claude-vscode"]) == 0
+    main(["--as", "codex", "ask", "claude-vscode", "pinned?"]); capsys.readouterr()
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "0970849a-xyz", "cwd": str(tmp_path)})))
+    assert main(["hook-run", "claude"]) == 0
+    assert "You are 'claude-vscode'" in capsys.readouterr().out

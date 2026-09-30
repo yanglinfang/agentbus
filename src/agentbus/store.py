@@ -146,8 +146,29 @@ class Bus:
         return self._config().get("wake", {}).get(agent)
 
     def session_name(self, session_id: str, prefix: str) -> str:
-        """Stable per-session identity for hook-driven agents: prefix + short id."""
+        """Stable per-session identity for hook-driven agents: a bound name if
+        `bind_session` was used, else prefix + short id."""
+        for pfx, name in self._config().get("sessions", {}).items():
+            if session_id.startswith(pfx):
+                return name
         return f"{prefix}-{session_id[:6]}" if session_id else prefix
+
+    def bind_session(self, session_prefix: str, name: str) -> None:
+        cfg = self._config(); cfg.setdefault("sessions", {})[session_prefix] = name; self._write_config(cfg)
+
+    def has_history(self, agent: str) -> bool:
+        return any(m.from_ == agent for m in self.messages())
+
+    def start_fresh(self, agent: str) -> list[Message]:
+        """First contact for a brand-new identity: everything already on the bus is
+        treated as read, except asks that are still open and addressed to it or to
+        everyone. Returns what it should actually see. Avoids replaying the whole
+        history into a new session's context."""
+        open_ids = {m.id for m in self.open_asks(for_agent=agent)}
+        old = [m for m in self.inbox(agent) if m.id not in open_ids]
+        if old:
+            self.ack(agent, [m.id for m in old])
+        return self.inbox(agent)
 
     @property
     def name(self) -> str:

@@ -271,13 +271,20 @@ def cmd_hook_run(args):
         payload = {}
     bus = Bus.open(Path(payload.get("cwd")) if payload.get("cwd") else None)
     me = os.environ.get("ABUS_AGENT") or bus.session_name(str(payload.get("session_id", "")), args.tool)
-    msgs = bus.inbox(me)
+    msgs = bus.inbox(me) if (bus.has_history(me) or bus.acked_by(me)) else bus.start_fresh(me)
     if not msgs:
         return
     sys.stdout.write(bus.render_inject(me, msgs))
     sys.stdout.write(f"(You are '{me}' on this bus. Use: abus --as {me} …)\n")
     if args.ack:
         bus.ack(me, [m.id for m in msgs])
+
+
+def cmd_bind_session(args):
+    """Pin an editor session (by session-id prefix) to an existing bus identity,
+    so a hook-driven session keeps one name across restarts."""
+    _bus(args).bind_session(args.session_prefix, args.name)
+    print(f"sessions starting {args.session_prefix!r} will act as {args.name}")
 
 
 def cmd_register_wake(args):
@@ -370,6 +377,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sp.add_parser("hook", help="wake-up integration for a specific tool"); s.add_argument("tool", choices=["claude"])
     s.add_argument("--install", action="store_true"); s.set_defaults(fn=cmd_hook)
     s = sp.add_parser("hook-run", help="(called by editor hooks) show inbox for the per-session identity"); s.add_argument("tool", choices=["claude"]); s.add_argument("--ack", action="store_true"); s.set_defaults(fn=cmd_hook_run)
+    s = sp.add_parser("bind-session", help="pin a hook session (id prefix) to an existing identity"); s.add_argument("session_prefix"); s.add_argument("name"); s.set_defaults(fn=cmd_bind_session)
     s = sp.add_parser("register-wake", help="store the shell command that wakes an agent (runs as <agent>-worker)"); s.add_argument("agent"); s.add_argument("command"); s.set_defaults(fn=cmd_register_wake)
     s = sp.add_parser("wake", help="run an agent's registered wake command as <agent>-worker"); s.add_argument("agent"); s.add_argument("--wait", action="store_true"); s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_wake)
     sp.add_parser("mcp", help="run the MCP stdio server (needs agent-bus[mcp])").set_defaults(fn=cmd_mcp)
