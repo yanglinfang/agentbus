@@ -18,6 +18,7 @@ def test_init_creates_log_and_head(tmp_path):
     b = Bus.init(tmp_path)
     assert (tmp_path / ".agentbus" / "log.jsonl").exists()
     assert "HEAD" in (tmp_path / ".agentbus" / "HEAD.md").read_text()
+    assert (tmp_path / ".agentbus" / ".gitignore").read_text().strip() == "HEAD.md"
     (tmp_path / "deep" / "er").mkdir(parents=True)
     assert Bus.open(tmp_path / "deep" / "er").path == b.path  # found by walking up, like git
 

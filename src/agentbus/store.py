@@ -113,6 +113,10 @@ class Bus:
                 "version": 1,
             }, indent=2) + "\n")
         bus.log_path.touch()
+        # HEAD.md is derived from the log; committing it only creates churn.
+        gi = path / ".gitignore"
+        if not gi.exists():
+            gi.write_text(f"{HEAD}\n")
         bus.render_head()
         return bus
 
