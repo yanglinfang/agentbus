@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+dist/
+.DS_Store
+# a bus used for dogfooding inside this repo
+.agentbus/
