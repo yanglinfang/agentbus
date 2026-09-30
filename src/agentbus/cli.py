@@ -171,7 +171,13 @@ def cmd_locks(args):
 
 def cmd_inbox(args):
     bus, me = _bus(args), _agent(args)
-    msgs = bus.inbox(me, include_broadcast=not args.direct_only)
+    first_contact = not (bus.has_history(me) or bus.acked_by(me))
+    if first_contact and not args.all:
+        # A brand-new identity starts from now: history is marked read except
+        # open asks addressed to it. `abus log` has the past; `--all` overrides.
+        msgs = bus.start_fresh(me)
+    else:
+        msgs = bus.inbox(me, include_broadcast=not args.direct_only)
     if not msgs:
         if not args.quiet_empty and args.format == "text":
             print(f"(inbox empty for {me})")  # machine formats stay silent
@@ -272,6 +278,8 @@ def cmd_hook_run(args):
     bus = Bus.open(Path(payload.get("cwd")) if payload.get("cwd") else None)
     me = os.environ.get("ABUS_AGENT") or bus.session_name(str(payload.get("session_id", "")), args.tool)
     msgs = bus.inbox(me) if (bus.has_history(me) or bus.acked_by(me)) else bus.start_fresh(me)
+    if args.identify:
+        print(f"(You are '{me}' on bus '{bus.name}'.)")
     if not msgs:
         return
     sys.stdout.write(bus.render_inject(me, msgs))
@@ -361,6 +369,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--ack", action="store_true", help="ack everything shown")
     s.add_argument("--format", default="text", choices=["text", "json", "inject"])
     s.add_argument("--direct-only", action="store_true"); s.add_argument("--quiet-empty", action="store_true")
+    s.add_argument("--all", action="store_true", help="first contact: show the whole backlog instead of starting from now")
     s.set_defaults(fn=cmd_inbox)
     s = sp.add_parser("ack"); s.add_argument("ids", nargs="+"); s.set_defaults(fn=cmd_ack)
 
@@ -376,7 +385,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sp.add_parser("hook", help="wake-up integration for a specific tool"); s.add_argument("tool", choices=["claude"])
     s.add_argument("--install", action="store_true"); s.set_defaults(fn=cmd_hook)
-    s = sp.add_parser("hook-run", help="(called by editor hooks) show inbox for the per-session identity"); s.add_argument("tool", choices=["claude"]); s.add_argument("--ack", action="store_true"); s.set_defaults(fn=cmd_hook_run)
+    s = sp.add_parser("hook-run", help="(called by editor hooks) show inbox for the per-session identity"); s.add_argument("tool", choices=["claude"]); s.add_argument("--ack", action="store_true"); s.add_argument("--identify", action="store_true", help="always print the identity line, even with an empty inbox"); s.set_defaults(fn=cmd_hook_run)
     s = sp.add_parser("bind-session", help="pin a hook session (id prefix) to an existing identity"); s.add_argument("session_prefix"); s.add_argument("name"); s.set_defaults(fn=cmd_bind_session)
     s = sp.add_parser("register-wake", help="store the shell command that wakes an agent (runs as <agent>-worker)"); s.add_argument("agent"); s.add_argument("command"); s.set_defaults(fn=cmd_register_wake)
     s = sp.add_parser("wake", help="run an agent's registered wake command as <agent>-worker"); s.add_argument("agent"); s.add_argument("--wait", action="store_true"); s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_wake)

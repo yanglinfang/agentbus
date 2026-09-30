@@ -215,3 +215,23 @@ def test_inbox_json_is_silent_when_empty(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path); main(["init"]); capsys.readouterr()
     assert main(["--as", "a", "inbox", "--format", "json"]) == 0
     assert capsys.readouterr().out == ""
+
+
+def test_cli_inbox_first_contact_starts_from_now(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path); main(["init"])
+    for i in range(3):
+        main(["--as", "codex", "send", "*", f"old {i}"])
+    main(["--as", "codex", "ask", "*", "open for all"]); capsys.readouterr()
+    assert main(["--as", "newbie", "inbox"]) == 0
+    out = capsys.readouterr().out
+    assert "old 0" not in out and "open for all" in out
+    assert main(["--as", "newbie2", "inbox", "--all"]) == 0
+    assert "old 0" in capsys.readouterr().out
+
+
+def test_hook_run_identify_prints_even_when_empty(tmp_path, monkeypatch, capsys):
+    import io
+    monkeypatch.chdir(tmp_path); main(["init"]); monkeypatch.delenv("ABUS_AGENT", raising=False); capsys.readouterr()
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "quiet1", "cwd": str(tmp_path)})))
+    assert main(["hook-run", "claude", "--identify"]) == 0
+    assert "You are 'claude-quiet1'" in capsys.readouterr().out
