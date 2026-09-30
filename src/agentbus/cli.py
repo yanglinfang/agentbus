@@ -16,14 +16,21 @@ from pathlib import Path
 
 from .store import BROADCAST, Bus, BusError, Message, wait_for_new
 
-def claude_hook(agent: str) -> dict:
-    # Identity is baked into the command: hooks run in a fresh shell where
-    # ABUS_AGENT is usually not set.
+def claude_hook(agent: str | None) -> dict:
+    # Two modes. Fixed: `--as NAME` baked in (one Claude session per checkout).
+    # Per-session (default): `hook-run` reads Claude's hook JSON from stdin and
+    # derives `claude-<session_id[:6]>`, so two Claude sessions sharing a checkout
+    # never collide. The injected header tells the session its own name.
+    if agent:
+        return {"hooks": {
+            "UserPromptSubmit": [{"hooks": [{"type": "command",
+                "command": f"abus --as {agent} inbox --format inject --ack --quiet-empty"}]}],
+            "Stop": [{"hooks": [{"type": "command",
+                "command": f"abus --as {agent} inbox --format inject --quiet-empty"}]}],
+        }}
     return {"hooks": {
-        "UserPromptSubmit": [{"hooks": [{"type": "command",
-            "command": f"abus --as {agent} inbox --format inject --ack --quiet-empty"}]}],
-        "Stop": [{"hooks": [{"type": "command",
-            "command": f"abus --as {agent} inbox --format inject --quiet-empty"}]}],
+        "UserPromptSubmit": [{"hooks": [{"type": "command", "command": "abus hook-run claude --ack"}]}],
+        "Stop": [{"hooks": [{"type": "command", "command": "abus hook-run claude"}]}],
     }}
 
 INSTRUCTIONS = """\
@@ -86,11 +93,21 @@ def cmd_instructions(args):
     print(INSTRUCTIONS)
 
 
+def _maybe_wake(bus, args):
+    if getattr(args, "wake", False) and args.to != BROADCAST:
+        cmd = bus.wake_command(args.to)
+        if cmd:
+            ns = argparse.Namespace(dir=getattr(args, "dir", None), agent=args.to, dry_run=False, wait=False)
+            cmd_wake(ns)
+        else:
+            print(f"(no wake registered for {args.to}; message queued)", file=sys.stderr)
+
+
 def cmd_send(args):
     bus, me = _bus(args), _agent(args)
     m = bus.post(me, args.to, args.type, args.body, thread=args.thread or "",
                  refs=args.ref or [], confidence=args.conf or "", ack_required=args.ack_required)
-    print(m.id)
+    print(m.id); _maybe_wake(bus, args)
 
 
 def cmd_claim(args):
@@ -109,7 +126,7 @@ def cmd_retract(args):
 def cmd_ask(args):
     bus, me = _bus(args), _agent(args)
     m = bus.post(me, args.to, "ask", args.body, thread=args.thread or "")
-    print(m.id)
+    print(m.id); _maybe_wake(bus, args)
 
 
 def cmd_answer(args):
@@ -201,6 +218,9 @@ def cmd_watch(args):
         sys.stdout.write("\a")
         sys.stdout.write(bus.render_inject(me, msgs))
         sys.stdout.flush()
+        if args.exec:
+            env = {**os.environ, "ABUS_AGENT": me, "ABUS_INJECT": bus.render_inject(me, msgs)}
+            subprocess.call(args.exec, shell=True, env=env, cwd=bus.path.parent)
         if args.notify and shutil.which("osascript"):
             subprocess.run(["osascript", "-e",
                             f'display notification "{len(msgs)} new message(s)" with title "agentbus → {me}"'],
@@ -214,7 +234,7 @@ def cmd_watch(args):
 def cmd_hook(args):
     if args.tool != "claude":
         raise BusError("only `abus hook claude` is implemented; for others see `abus instructions`")
-    agent = getattr(args, "as_", None) or os.environ.get("ABUS_AGENT") or "claude"
+    agent = getattr(args, "as_", None) or os.environ.get("ABUS_AGENT") or None
     spec = claude_hook(agent)
     if args.install:
         path = Path(args.dir or ".") / ".claude" / "settings.json"
@@ -224,10 +244,11 @@ def cmd_hook(args):
         for event, entries in spec["hooks"].items():
             # Replace any earlier abus hook for this event, then add ours.
             hooks[event] = [e for e in hooks.get(event, [])
-                            if not any("abus " in h.get("command", "") for h in e.get("hooks", []))]
+                            if not any(h.get("command", "").startswith("abus ") for h in e.get("hooks", []))]
             hooks[event].extend(entries)
         path.write_text(json.dumps(current, indent=2) + "\n")
-        print(f"installed Claude Code hooks (as {agent}) into {path}")
+        mode = f"as {agent}" if agent else "per-session identity claude-<session_id>"
+        print(f"installed Claude Code hooks ({mode}) into {path}")
     else:
         print(json.dumps(spec, indent=2))
 
@@ -238,6 +259,56 @@ def cmd_mcp(args):
     except ImportError as e:
         raise BusError(f"MCP server needs the extra: pip install 'agent-bus[mcp]' ({e})")
     run(agent=_agent(args), start=Path(args.dir) if args.dir else None)
+
+
+def cmd_hook_run(args):
+    """Entry point for editor hooks. Reads the hook's JSON from stdin (Claude Code
+    sends session_id, cwd, hook_event_name, ...) and shows the inbox for the
+    per-session identity. Prints nothing when there is nothing new."""
+    try:
+        payload = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        payload = {}
+    bus = Bus.open(Path(payload.get("cwd")) if payload.get("cwd") else None)
+    me = os.environ.get("ABUS_AGENT") or bus.session_name(str(payload.get("session_id", "")), args.tool)
+    msgs = bus.inbox(me)
+    if not msgs:
+        return
+    sys.stdout.write(bus.render_inject(me, msgs))
+    sys.stdout.write(f"(You are '{me}' on this bus. Use: abus --as {me} …)\n")
+    if args.ack:
+        bus.ack(me, [m.id for m in msgs])
+
+
+def cmd_register_wake(args):
+    bus = _bus(args)
+    bus.register_wake(args.agent, args.command)
+    print(f"wake for {args.agent}: {args.command}")
+
+
+def cmd_wake(args):
+    """Run an agent's registered wake command, as `<agent>-worker`. The worker
+    can read the bus and act, and its posts are visibly its own — it never
+    speaks as the live agent (see the incident that motivated this: a spawned
+    codex worker posted as 'codex' while the real Codex session was active)."""
+    bus = _bus(args)
+    cmd = bus.wake_command(args.agent)
+    if not cmd:
+        raise BusError(f"no wake command registered for {args.agent}; use `abus register-wake {args.agent} '<cmd>'`")
+    worker = f"{args.agent}-worker"
+    env = {**os.environ, "ABUS_AGENT": worker, "ABUS_WAKE_TARGET": args.agent, "ABUS_BUS": str(bus.path.parent)}
+    cmd = cmd.replace("{worker}", worker).replace("{agent}", args.agent).replace("{bus}", str(bus.path.parent))
+    if args.dry_run:
+        print(cmd); return
+    bus.post("abus", BROADCAST, "note", f"waking {args.agent} as {worker}", ack_required=False)
+    if args.wait:
+        code = subprocess.call(cmd, shell=True, env=env, cwd=bus.path.parent)
+        if code:
+            raise BusError(f"wake command for {args.agent} exited {code}")
+        return
+    subprocess.Popen(cmd, shell=True, env=env, cwd=bus.path.parent, start_new_session=True,
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"spawned wake for {args.agent} as {worker}")
 
 
 def cmd_whoami(args):
@@ -258,7 +329,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sp.add_parser("send", help="send a note/status to an agent or *")
     s.add_argument("to"); s.add_argument("body"); s.add_argument("--type", default="note", choices=["note", "status"])
     s.add_argument("--thread"); s.add_argument("--ref", action="append"); s.add_argument("--conf")
-    s.add_argument("--ack-required", action="store_true"); s.set_defaults(fn=cmd_send)
+    s.add_argument("--ack-required", action="store_true"); s.add_argument("--wake", action="store_true", help="run the recipient's registered wake command")
+    s.set_defaults(fn=cmd_send)
 
     s = sp.add_parser("claim", help="state a fact; needs --ref")
     s.add_argument("body"); s.add_argument("--to", default=BROADCAST); s.add_argument("--ref", action="append", required=True)
@@ -267,7 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sp.add_parser("retract", help="withdraw a claim"); s.add_argument("id"); s.add_argument("--reason", required=True); s.set_defaults(fn=cmd_retract)
 
     s = sp.add_parser("ask", help="ask an agent (or *) a question that stays open until answered")
-    s.add_argument("to"); s.add_argument("body"); s.add_argument("--thread"); s.set_defaults(fn=cmd_ask)
+    s.add_argument("to"); s.add_argument("body"); s.add_argument("--thread"); s.add_argument("--wake", action="store_true"); s.set_defaults(fn=cmd_ask)
     s = sp.add_parser("answer", help="answer an ask by id"); s.add_argument("id"); s.add_argument("body"); s.add_argument("--ref", action="append"); s.set_defaults(fn=cmd_answer)
     s = sp.add_parser("asks", help="list open asks (for you, or --all)"); s.add_argument("--all", action="store_true"); s.set_defaults(fn=cmd_asks)
 
@@ -292,10 +364,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sp.add_parser("watch", help="block until something arrives; print it (and ring the bell)")
     s.add_argument("--poll", type=float, default=2.0); s.add_argument("--ack", action="store_true", help="keep watching, acking as you go")
-    s.add_argument("--notify", action="store_true", help="macOS notification too"); s.set_defaults(fn=cmd_watch)
+    s.add_argument("--notify", action="store_true", help="macOS notification too")
+    s.add_argument("--exec", metavar="CMD", help="run CMD for each batch (ABUS_INJECT holds the messages)"); s.set_defaults(fn=cmd_watch)
 
     s = sp.add_parser("hook", help="wake-up integration for a specific tool"); s.add_argument("tool", choices=["claude"])
     s.add_argument("--install", action="store_true"); s.set_defaults(fn=cmd_hook)
+    s = sp.add_parser("hook-run", help="(called by editor hooks) show inbox for the per-session identity"); s.add_argument("tool", choices=["claude"]); s.add_argument("--ack", action="store_true"); s.set_defaults(fn=cmd_hook_run)
+    s = sp.add_parser("register-wake", help="store the shell command that wakes an agent (runs as <agent>-worker)"); s.add_argument("agent"); s.add_argument("command"); s.set_defaults(fn=cmd_register_wake)
+    s = sp.add_parser("wake", help="run an agent's registered wake command as <agent>-worker"); s.add_argument("agent"); s.add_argument("--wait", action="store_true"); s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_wake)
     sp.add_parser("mcp", help="run the MCP stdio server (needs agent-bus[mcp])").set_defaults(fn=cmd_mcp)
     return p
 

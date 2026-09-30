@@ -150,3 +150,40 @@ def test_hook_install_bakes_identity_and_is_idempotent(tmp_path, monkeypatch, ca
     cfg = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     cmds = [h["command"] for e in cfg["hooks"]["UserPromptSubmit"] for h in e["hooks"]]
     assert cmds == ["abus --as claude inbox --format inject --ack --quiet-empty"]
+    # default (no --as) is per-session identity via hook-run
+    monkeypatch.delenv("ABUS_AGENT", raising=False)
+    assert main(["hook", "claude", "--install"]) == 0
+    cfg = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    cmds = [h["command"] for e in cfg["hooks"]["UserPromptSubmit"] for h in e["hooks"]]
+    assert cmds == ["abus hook-run claude --ack"]
+
+
+def test_hook_run_derives_per_session_identity(tmp_path, monkeypatch, capsys):
+    import io
+    monkeypatch.chdir(tmp_path); main(["init"]); monkeypatch.delenv("ABUS_AGENT", raising=False)
+    main(["--as", "codex", "ask", "*", "anyone there?"]); capsys.readouterr()
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "abcdef123456", "cwd": str(tmp_path)})))
+    assert main(["hook-run", "claude", "--ack"]) == 0
+    out = capsys.readouterr().out
+    assert "for claude-abcdef on bus" in out and "You are 'claude-abcdef'" in out
+    # a second session sees the same broadcast independently (acks are per identity)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "zzzzzz999", "cwd": str(tmp_path)})))
+    assert main(["hook-run", "claude"]) == 0
+    assert "for claude-zzzzzz" in capsys.readouterr().out
+
+
+def test_wake_runs_as_worker_identity(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path); main(["init"])
+    marker = tmp_path / "woke.txt"
+    assert main(["register-wake", "codex", f"sh -c 'echo $ABUS_AGENT > {marker}'"]) == 0
+    assert main(["wake", "codex", "--dry-run"]) == 0
+    assert main(["wake", "codex", "--wait"]) == 0
+    assert marker.read_text().strip() == "codex-worker"
+    b = Bus.open(tmp_path)
+    assert any(m.from_ == "abus" and "waking codex as codex-worker" in m.body for m in b.messages())
+
+
+def test_wake_without_registration_is_an_error(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path); main(["init"])
+    assert main(["wake", "nobody"]) == 2
+    assert "no wake command registered" in capsys.readouterr().err

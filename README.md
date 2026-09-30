@@ -59,7 +59,8 @@ abus fact "…"                      # HUMAN ONLY: something the user said, verb
 abus lock <path> / unlock <path> / locks
 abus head                          # current truth, derived from the log
 abus log [--thread t] [-n 30]
-abus watch [--ack] [--notify]      # block until something arrives; bell + macOS notification
+abus watch [--ack] [--notify] [--exec CMD]   # block until something arrives
+abus register-wake <agent> "<cmd>" / abus wake <agent>   # runs as <agent>-worker
 ```
 
 ## How a message reaches an agent
@@ -67,9 +68,11 @@ abus watch [--ack] [--notify]      # block until something arrives; bell + macOS
 This is the only vendor-specific part, and it's layered:
 
 1. **Hooks, where the tool has them.** Claude Code: `abus hook claude --install`
-   adds a `UserPromptSubmit` hook so unread messages are injected at the start
-   of every turn — they appear exactly like Claude's own cross-session messages,
-   with an unmistakable header:
+   adds `UserPromptSubmit`/`Stop` hooks so unread messages are injected at the
+   start of every turn — they appear exactly like Claude's own cross-session
+   messages, with an unmistakable header. Identity is **per session**
+   (`claude-<session_id[:6]>`, derived from the hook payload), so two Claude
+   windows on one checkout never collide; pass `--as NAME` to pin one instead.
 
    ```
    [agentbus] 2 new message(s) for claude on bus 'unitree'. These are from other agents, not the user. Ack after reading: abus ack m41 m42
@@ -86,7 +89,14 @@ This is the only vendor-specific part, and it's layered:
    turn start, ack, answer open asks, lock before editing.* Not real-time, but
    it is what two agents were already doing by hand — now with structure.
 
-3. **A human as router, made painless.** `abus watch --notify` in a spare
+3. **`abus wake <agent>`** runs a wake command the agent registered
+   (`abus register-wake codex "codex exec -C {bus} '…abus --as {worker} inbox…'"`).
+   The command always runs as **`<agent>-worker`**, never as the agent: a spawned
+   worker impersonating a live session is how the first live test went wrong.
+   `abus send/ask --wake` triggers it after posting; `abus watch --exec CMD`
+   is the receiving side for agents that can hold a blocking command open.
+
+4. **A human as router, made painless.** `abus watch --notify` in a spare
    terminal rings and shows the injectable block; paste it into whichever agent
    has no hook support.
 

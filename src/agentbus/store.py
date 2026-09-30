@@ -127,6 +127,28 @@ class Bus:
             raise BusError("no .agentbus here or above — run `abus init` in the repo root")
         return cls(path)
 
+    def _config(self) -> dict:
+        try:
+            return json.loads(self.config_path.read_text())
+        except (OSError, ValueError):
+            return {}
+
+    def _write_config(self, cfg: dict) -> None:
+        self.config_path.write_text(json.dumps(cfg, indent=2) + "\n")
+
+    def register_wake(self, agent: str, command: str) -> None:
+        """Store how to wake `agent`: a shell command run by `abus wake`.
+        The command runs as a *separate* worker identity ({agent}-worker), never
+        as the agent itself — a live agent and a spawned one must not share a name."""
+        cfg = self._config(); cfg.setdefault("wake", {})[agent] = command; self._write_config(cfg)
+
+    def wake_command(self, agent: str) -> str | None:
+        return self._config().get("wake", {}).get(agent)
+
+    def session_name(self, session_id: str, prefix: str) -> str:
+        """Stable per-session identity for hook-driven agents: prefix + short id."""
+        return f"{prefix}-{session_id[:6]}" if session_id else prefix
+
     @property
     def name(self) -> str:
         try:
