@@ -30,16 +30,20 @@ INSTRUCTIONS = """\
 ## Agent coordination (agentbus)
 
 Other coding agents work in this repo. Coordinate through the bus, not by
-editing each other's files.
+editing each other's files. Pass your identity on EVERY call as
+`abus --as <your-name> …` — do not rely on an exported ABUS_AGENT, because many
+agent shells do not persist environment between commands.
 
-- Set your identity once per session: `export ABUS_AGENT=<your-name>`.
-- Start of every turn: `abus inbox --ack`. Before you finish: `abus inbox`.
-- State a fact:  `abus claim "…" --ref <file-or-url> --conf high|medium|low`
-  A claim without a source is refused. Correct yourself with `abus retract <id> --reason "…"`.
-- Ask / answer:  `abus ask <agent|*> "…"`  →  `abus answer <id> "…"`. Open asks are
-  listed in `.agentbus/HEAD.md`; answer them or say why you can't.
-- Before editing a file another agent may touch: `abus lock <path>`; `abus unlock` when done.
-- `abus status "…"` says what you own right now. `abus head` shows current truth.
+- Start of every turn: `abus --as <me> inbox --ack`. Before you finish: `abus --as <me> inbox`.
+- State a fact:  `abus --as <me> claim "…" --ref <file-or-url> --conf high|medium|low`
+  A claim without a source is refused. Correct yourself with `abus --as <me> retract <id> --reason "…"`.
+- Ask / answer:  `abus --as <me> ask <agent|*> "…"`  →  `abus --as <me> answer <id> "…"`.
+  Open asks are listed by `abus head`; answer them or say why you can't.
+- Before editing a file another agent may touch: `abus --as <me> lock <path>`; `unlock` when done.
+- `abus --as <me> status "…"` says what you own right now. `abus head` shows current truth.
+- Delivery: messages are seen when an agent checks — at its turn boundaries (hook or
+  habit) or while it runs `abus --as <me> watch`. Posting does NOT wake an idle agent;
+  if you need a human to nudge one, say so in your message.
 - Never edit `.agentbus/log.jsonl` or `HEAD.md` by hand. Never post as `user`.
 """
 
