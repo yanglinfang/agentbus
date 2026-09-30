@@ -158,7 +158,8 @@ class Bus:
                 os.fsync(f.fileno())
             finally:
                 fcntl.flock(f, fcntl.LOCK_UN)
-        if msg.type in {"claim", "retract", "user_fact", "lock", "unlock", "status"}:
+        # Everything but an ack changes what HEAD shows (asks open/close too).
+        if msg.type != "ack":
             self.render_head()
         return msg
 

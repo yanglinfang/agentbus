@@ -16,18 +16,15 @@ from pathlib import Path
 
 from .store import BROADCAST, Bus, BusError, Message, wait_for_new
 
-CLAUDE_HOOK = {
-    "hooks": {
-        "UserPromptSubmit": [{
-            "hooks": [{"type": "command",
-                       "command": "abus inbox --format inject --ack --quiet-empty"}]
-        }],
-        "Stop": [{
-            "hooks": [{"type": "command",
-                       "command": "abus inbox --format inject --quiet-empty"}]
-        }],
-    }
-}
+def claude_hook(agent: str) -> dict:
+    # Identity is baked into the command: hooks run in a fresh shell where
+    # ABUS_AGENT is usually not set.
+    return {"hooks": {
+        "UserPromptSubmit": [{"hooks": [{"type": "command",
+            "command": f"abus --as {agent} inbox --format inject --ack --quiet-empty"}]}],
+        "Stop": [{"hooks": [{"type": "command",
+            "command": f"abus --as {agent} inbox --format inject --quiet-empty"}]}],
+    }}
 
 INSTRUCTIONS = """\
 ## Agent coordination (agentbus)
@@ -213,20 +210,22 @@ def cmd_watch(args):
 def cmd_hook(args):
     if args.tool != "claude":
         raise BusError("only `abus hook claude` is implemented; for others see `abus instructions`")
+    agent = getattr(args, "as_", None) or os.environ.get("ABUS_AGENT") or "claude"
+    spec = claude_hook(agent)
     if args.install:
         path = Path(args.dir or ".") / ".claude" / "settings.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         current = json.loads(path.read_text()) if path.exists() else {}
         hooks = current.setdefault("hooks", {})
-        for event, entries in CLAUDE_HOOK["hooks"].items():
-            hooks.setdefault(event, [])
-            if not any(json.dumps(e, sort_keys=True) == json.dumps(entries[0], sort_keys=True) for e in hooks[event]):
-                hooks[event].extend(entries)
+        for event, entries in spec["hooks"].items():
+            # Replace any earlier abus hook for this event, then add ours.
+            hooks[event] = [e for e in hooks.get(event, [])
+                            if not any("abus " in h.get("command", "") for h in e.get("hooks", []))]
+            hooks[event].extend(entries)
         path.write_text(json.dumps(current, indent=2) + "\n")
-        print(f"installed Claude Code hooks into {path}")
-        print("Claude Code will now see new bus messages at the start of every turn.")
+        print(f"installed Claude Code hooks (as {agent}) into {path}")
     else:
-        print(json.dumps(CLAUDE_HOOK, indent=2))
+        print(json.dumps(spec, indent=2))
 
 
 def cmd_mcp(args):

@@ -134,3 +134,19 @@ def test_concurrent_appends_do_not_interleave(tmp_path):
     assert all(p.wait() == 0 for p in procs)
     lines = (tmp_path / ".agentbus" / "log.jsonl").read_text().splitlines()
     assert len(lines) == 160 and all(json.loads(ln)["body"] == "x" * 200 for ln in lines)
+
+
+def test_head_refreshes_on_ask_and_answer(bus):
+    a = bus.post("codex", "claude", "ask", "hook identity?")
+    assert a.id in (bus.path / "HEAD.md").read_text()
+    bus.post("claude", "codex", "answer", "baked in", in_reply_to=a.id)
+    assert a.id not in (bus.path / "HEAD.md").read_text()
+
+
+def test_hook_install_bakes_identity_and_is_idempotent(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path); main(["init"])
+    assert main(["--as", "claude", "hook", "claude", "--install"]) == 0
+    assert main(["--as", "claude", "hook", "claude", "--install"]) == 0
+    cfg = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    cmds = [h["command"] for e in cfg["hooks"]["UserPromptSubmit"] for h in e["hooks"]]
+    assert cmds == ["abus --as claude inbox --format inject --ack --quiet-empty"]
