@@ -212,6 +212,6 @@ def test_bind_session_pins_identity(tmp_path, monkeypatch, capsys):
 
 
 def test_inbox_json_is_silent_when_empty(tmp_path, monkeypatch, capsys):
-    monkeypatch.chdir(tmp_path); main(["init"])
+    monkeypatch.chdir(tmp_path); main(["init"]); capsys.readouterr()
     assert main(["--as", "a", "inbox", "--format", "json"]) == 0
     assert capsys.readouterr().out == ""
