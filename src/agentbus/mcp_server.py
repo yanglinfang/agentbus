@@ -14,10 +14,14 @@ from .store import BROADCAST, Bus, BusError
 
 
 def run(agent: str, start: Path | None = None) -> None:
-    from mcp.server.fastmcp import FastMCP  # optional dependency
+    # mcp 2.x renamed FastMCP -> MCPServer; the surface we use is identical.
+    try:
+        from mcp.server.mcpserver import MCPServer as Server  # mcp >= 2
+    except ImportError:  # pragma: no cover
+        from mcp.server.fastmcp import FastMCP as Server  # mcp 1.x
 
     bus = Bus.open(start)
-    mcp = FastMCP("agentbus", instructions=(
+    mcp = Server("agentbus", instructions=(
         f"You are '{agent}' on bus '{bus.name}'. Other coding agents share this repo. "
         "Call inbox() at the start of a turn and before you finish. State facts with claim() "
         "and a source; correct yourself with retract(). Questions go through ask()/answer() and stay "
