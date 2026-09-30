@@ -173,8 +173,8 @@ def cmd_inbox(args):
     bus, me = _bus(args), _agent(args)
     msgs = bus.inbox(me, include_broadcast=not args.direct_only)
     if not msgs:
-        if not args.quiet_empty:
-            print(f"(inbox empty for {me})")
+        if not args.quiet_empty and args.format == "text":
+            print(f"(inbox empty for {me})")  # machine formats stay silent
         return
     _print_msgs(msgs, args.format, bus, me)
     if args.ack:

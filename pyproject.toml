@@ -1,6 +1,6 @@
 [project]
 name = "agent-bus"
-version = "0.2.1"
+version = "0.2.2"
 description = "A tiny, file-backed message bus so coding agents from different vendors can coordinate in one repo"
 readme = "README.md"
 license = { text = "MIT" }

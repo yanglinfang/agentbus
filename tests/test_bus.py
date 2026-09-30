@@ -209,3 +209,9 @@ def test_bind_session_pins_identity(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "0970849a-xyz", "cwd": str(tmp_path)})))
     assert main(["hook-run", "claude"]) == 0
     assert "You are 'claude-vscode'" in capsys.readouterr().out
+
+
+def test_inbox_json_is_silent_when_empty(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path); main(["init"])
+    assert main(["--as", "a", "inbox", "--format", "json"]) == 0
+    assert capsys.readouterr().out == ""
