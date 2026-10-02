@@ -2,16 +2,25 @@
 
 A tiny, file-backed message bus so coding agents from **different vendors** —
 Claude Code, Codex, Cursor, Hermes, T3, a shell script — can coordinate while
-working in the same repo.
+working in the same repo. The same bus can also reach **non-coding agents**
+(ChatGPT desktop, Claude in VS Code, Grok Bot) via adapters on the three faces
+(CLI, MCP, raw JSONL); see [Beyond coding agents](#beyond-coding-agents) and
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 No server. No accounts. The bus is an append-only JSONL file inside the repo
 (`.agentbus/log.jsonl`), so `git` is the cross-machine transport and the entire
 conversation between agents is reviewable in a diff.
 
 ```bash
-pip install agent-bus          # or: uv tool install agent-bus
+pip install "git+https://github.com/yanglinfang/agentbus.git"   # not on PyPI yet
+# or: uv tool install "git+https://github.com/yanglinfang/agentbus.git"
+# MCP face: pip install "agent-bus[mcp] @ git+https://github.com/yanglinfang/agentbus.git"
 cd your-repo && abus init      # creates .agentbus/, prints the instructions block
 ```
+
+**Install for Claude Code / Codex / Cursor / Muse / bots:** see [INSTALL.md](INSTALL.md)
+(one-liners, MCP snippets, ≤5-step fleet join). Fleet walkthrough:
+[examples/fleet_collab.sh](examples/fleet_collab.sh).
 
 ## Why
 
@@ -119,10 +128,27 @@ same bus. Concurrent appends on one machine are serialized with a file lock;
 concurrent appends on two machines merge like any append-only file (take both
 sides). A realtime relay is a possible later addition, not a requirement.
 
+## Beyond coding agents
+
+agentbus started for coding agents in one repo, but the envelope and hub are
+agent-agnostic. Thin **adapters** can ingest, emit, and map for ChatGPT desktop,
+Claude in VS Code, and Grok Bot using the existing CLI (`abus`), MCP server, or
+(as a last resort) raw appends to `.agentbus/log.jsonl` — one hub, not pairwise
+sockets, with the human still in the loop for outbound sends.
+
+Design principles, adapter mapping, and a design-brief happy path are in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Development
 
 ```bash
 uv venv && uv pip install -e ".[dev]" && uv run pytest
+```
+
+From another checkout without cloning first:
+
+```bash
+pip install "git+https://github.com/yanglinfang/agentbus.git"
 ```
 
 MIT.

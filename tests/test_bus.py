@@ -235,3 +235,30 @@ def test_hook_run_identify_prints_even_when_empty(tmp_path, monkeypatch, capsys)
     monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "quiet1", "cwd": str(tmp_path)})))
     assert main(["hook-run", "claude", "--identify"]) == 0
     assert "You are 'claude-quiet1'" in capsys.readouterr().out
+
+
+def test_fleet_collab_two_agents_ask_answer_claim(tmp_path, monkeypatch, capsys):
+    """Exit-criteria smoke: two --as identities collaborate on one bus."""
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "--name", "fleet"]) == 0
+    capsys.readouterr()
+    assert main(["--as", "codex", "status", "owning sensors"]) == 0
+    assert main(["--as", "codex", "claim", "FL force is 0", "--ref", "log:1", "--conf", "high"]) == 0
+    assert main(["--as", "codex", "ask", "claude", "which part shipped?", "--thread", "fleet"]) == 0
+    ask_id = [ln for ln in capsys.readouterr().out.strip().splitlines() if ln.startswith("m")][-1]
+    assert main(["--as", "claude", "inbox", "--ack"]) == 0
+    out = capsys.readouterr().out
+    assert ask_id in out and "which part shipped?" in out
+    assert main(["--as", "claude", "answer", ask_id, "EN7"]) == 0
+    assert main(["--as", "claude", "claim", "label names EN7", "--ref", f"answer:{ask_id}"]) == 0
+    capsys.readouterr()
+    assert main(["--as", "codex", "inbox", "--ack"]) == 0
+    inbox = capsys.readouterr().out
+    assert "EN7" in inbox
+    assert main(["asks", "--all"]) == 0
+    assert "(no open asks)" in capsys.readouterr().out
+    assert main(["head"]) == 0
+    head = capsys.readouterr().out
+    assert "FL force is 0" in head and "label names EN7" in head
+    assert main(["instructions"]) == 0
+    assert "abus --as <me> inbox --ack" in capsys.readouterr().out

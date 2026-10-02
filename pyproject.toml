@@ -6,7 +6,7 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
 authors = [{ name = "Lin Yang" }]
-keywords = ["agents", "mcp", "claude-code", "codex", "cursor", "coordination"]
+keywords = ["agents", "mcp", "claude-code", "codex", "cursor", "muse", "coordination"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: MIT License",
@@ -23,6 +23,8 @@ abus = "agentbus.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yanglinfang/agentbus"
+Repository = "https://github.com/yanglinfang/agentbus"
+Issues = "https://github.com/yanglinfang/agentbus/issues"
 
 [build-system]
 requires = ["hatchling"]
