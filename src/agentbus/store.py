@@ -16,6 +16,7 @@ import fcntl
 import json
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -25,6 +26,7 @@ BUS_DIR = ".agentbus"
 LOG = "log.jsonl"
 CONFIG = "config.json"
 HEAD = "HEAD.md"
+LOCK = "bus.lock"
 BROADCAST = "*"
 
 TYPES = {
@@ -98,6 +100,7 @@ class Bus:
     def __init__(self, path: Path):
         self.path = path
         self.log_path = path / LOG
+        self.lock_path = path / LOCK
         self.config_path = path / CONFIG
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -113,6 +116,7 @@ class Bus:
                 "version": 1,
             }, indent=2) + "\n")
         bus.log_path.touch()
+        bus.lock_path.touch()
         # HEAD.md is derived from the log; committing it only creates churn.
         gi = path / ".gitignore"
         if not gi.exists():
@@ -178,32 +182,58 @@ class Bus:
             return self.path.parent.name
 
     # ── log I/O ──────────────────────────────────────────────────────────────
-    def messages(self) -> Iterator[Message]:
+    @contextmanager
+    def _acquire(self, how: int):
+        """Exclusive/shared lock on a dedicated lock file (not the log fd).
+
+        Using a separate lock file avoids self-deadlock on Linux, where two
+        open()s of the same path are independent lock owners — taking LOCK_SH
+        on a read fd while holding LOCK_EX on an append fd blocks forever.
+        """
+        self.lock_path.touch(exist_ok=True)
+        with self.lock_path.open("a+", encoding="utf-8") as lf:
+            fcntl.flock(lf, how)
+            try:
+                yield
+            finally:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+
+    def _load(self) -> list[Message]:
+        """Parse log.jsonl. Caller must hold the bus lock."""
         if not self.log_path.exists():
-            return iter(())
+            return []
+        out: list[Message] = []
         with self.log_path.open("r", encoding="utf-8") as f:
-            lines = [ln for ln in f if ln.strip()]
-        return (Message.from_json(ln) for ln in lines)
+            for ln in f:
+                if not ln.strip():
+                    continue
+                try:
+                    out.append(Message.from_json(ln))
+                except json.JSONDecodeError:
+                    # Skip a corrupt trailing fragment rather than crashing the bus.
+                    continue
+        return out
+
+    def messages(self) -> Iterator[Message]:
+        with self._acquire(fcntl.LOCK_SH):
+            return iter(self._load())
 
     def _next_id(self) -> str:
-        n = sum(1 for _ in self.messages()) + 1
-        return f"m{n}"
+        # Caller must hold LOCK_EX.
+        return f"m{len(self._load()) + 1}"
 
     def append(self, msg: Message) -> Message:
-        # Advisory lock so two agents appending at once never interleave lines.
-        with self.log_path.open("a", encoding="utf-8") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            try:
-                if not msg.id:
-                    msg.id = self._next_id()
+        # Hold exclusive lock through write + HEAD refresh so readers never see
+        # a torn line and concurrent appends never interleave.
+        with self._acquire(fcntl.LOCK_EX):
+            if not msg.id:
+                msg.id = self._next_id()
+            with self.log_path.open("a", encoding="utf-8") as f:
                 f.write(msg.to_json() + "\n")
                 f.flush()
                 os.fsync(f.fileno())
-            finally:
-                fcntl.flock(f, fcntl.LOCK_UN)
-        # Everything but an ack changes what HEAD shows (asks open/close too).
-        if msg.type != "ack":
-            self.render_head()
+            if msg.type != "ack":
+                self._render_head_unlocked()
         return msg
 
     # ── posting ──────────────────────────────────────────────────────────────
@@ -256,8 +286,9 @@ class Bus:
                 out.append(m)
         return out
 
-    def open_asks(self, for_agent: str | None = None, by_agent: str | None = None) -> list[Message]:
-        msgs = list(self.messages())
+    def open_asks(self, for_agent: str | None = None, by_agent: str | None = None,
+                  msgs: list[Message] | None = None) -> list[Message]:
+        msgs = list(self.messages()) if msgs is None else msgs
         answered = {m.in_reply_to for m in msgs if m.type == "answer"}
         asks = [m for m in msgs if m.type == "ask" and m.id not in answered]
         if for_agent:
@@ -266,25 +297,29 @@ class Bus:
             asks = [m for m in asks if m.from_ == by_agent]
         return asks
 
-    def retracted(self) -> set[str]:
-        return {m.in_reply_to for m in self.messages() if m.type == "retract"}
+    def retracted(self, msgs: list[Message] | None = None) -> set[str]:
+        msgs = list(self.messages()) if msgs is None else msgs
+        return {m.in_reply_to for m in msgs if m.type == "retract"}
 
-    def facts(self) -> list[Message]:
-        gone = self.retracted()
-        return [m for m in self.messages() if m.type in {"claim", "user_fact"} and m.id not in gone]
+    def facts(self, msgs: list[Message] | None = None) -> list[Message]:
+        msgs = list(self.messages()) if msgs is None else msgs
+        gone = self.retracted(msgs)
+        return [m for m in msgs if m.type in {"claim", "user_fact"} and m.id not in gone]
 
-    def locks(self) -> dict[str, Message]:
+    def locks(self, msgs: list[Message] | None = None) -> dict[str, Message]:
+        msgs = list(self.messages()) if msgs is None else msgs
         held: dict[str, Message] = {}
-        for m in self.messages():
+        for m in msgs:
             if m.type == "lock":
                 held[m.body] = m
             elif m.type == "unlock":
                 held.pop(m.body, None)
         return held
 
-    def statuses(self) -> dict[str, Message]:
+    def statuses(self, msgs: list[Message] | None = None) -> dict[str, Message]:
+        msgs = list(self.messages()) if msgs is None else msgs
         latest: dict[str, Message] = {}
-        for m in self.messages():
+        for m in msgs:
             if m.type == "status":
                 latest[m.from_] = m
         return latest
@@ -297,10 +332,16 @@ class Bus:
 
     # ── HEAD: derived current truth ──────────────────────────────────────────
     def render_head(self) -> str:
-        facts = self.facts()
-        asks = self.open_asks()
-        locks = self.locks()
-        statuses = self.statuses()
+        with self._acquire(fcntl.LOCK_SH):
+            return self._render_head_unlocked()
+
+    def _render_head_unlocked(self) -> str:
+        # Caller must hold the bus lock (shared or exclusive).
+        msgs = self._load()
+        facts = self.facts(msgs)
+        asks = self.open_asks(msgs=msgs)
+        locks = self.locks(msgs)
+        statuses = self.statuses(msgs)
         lines = [f"# HEAD — {self.name}", "",
                  f"_Derived from `{LOG}` at {now_iso()}. Do not edit; post to the bus._", ""]
         lines.append("## Facts (claims minus retractions; user facts first)")
@@ -330,7 +371,10 @@ class Bus:
         if not statuses:
             lines.append("- (none)")
         text = "\n".join(lines) + "\n"
-        (self.path / HEAD).write_text(text, encoding="utf-8")
+        # Atomic replace so concurrent render_head calls cannot interleave bytes.
+        tmp = self.path / (HEAD + ".tmp")
+        tmp.write_text(text, encoding="utf-8")
+        os.replace(tmp, self.path / HEAD)
         return text
 
     # ── the wire format an agent reads ───────────────────────────────────────
