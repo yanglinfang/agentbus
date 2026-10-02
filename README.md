@@ -19,8 +19,10 @@ cd your-repo && abus init      # creates .agentbus/, prints the instructions blo
 ```
 
 **Install for Claude Code / Codex / Cursor / Muse / bots:** see [INSTALL.md](INSTALL.md)
-(one-liners, MCP snippets, ≤5-step fleet join). Fleet walkthrough:
-[examples/fleet_collab.sh](examples/fleet_collab.sh).
+(one-liners, ≤5-step fleet join). Copy-paste MCP configs:
+[examples/mcp/](examples/mcp/). Instructions block:
+[examples/AGENTS.snippet.md](examples/AGENTS.snippet.md).
+Fleet walkthrough: [examples/fleet_collab.sh](examples/fleet_collab.sh).
 
 ## Why
 

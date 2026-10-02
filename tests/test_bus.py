@@ -262,3 +262,50 @@ def test_fleet_collab_two_agents_ask_answer_claim(tmp_path, monkeypatch, capsys)
     assert "FL force is 0" in head and "label names EN7" in head
     assert main(["instructions"]) == 0
     assert "abus --as <me> inbox --ack" in capsys.readouterr().out
+
+
+def test_fleet_collab_three_agents_with_muse(tmp_path, monkeypatch, capsys):
+    """Third-agent join: muse receives an ask from claude and answers on the same bus."""
+    monkeypatch.chdir(tmp_path)
+    assert main(["init", "--name", "fleet3"]) == 0
+    capsys.readouterr()
+    assert main(["--as", "muse", "whoami"]) == 0
+    assert "muse" in capsys.readouterr().out
+    assert main(["--as", "muse", "status", "joined"]) == 0
+    assert main(["--as", "claude", "ask", "muse", "consolidate the brief?", "--thread", "fleet3"]) == 0
+    ask_id = [ln for ln in capsys.readouterr().out.strip().splitlines() if ln.startswith("m")][-1]
+    assert main(["--as", "muse", "inbox", "--ack"]) == 0
+    inbox = capsys.readouterr().out
+    assert ask_id in inbox and "consolidate the brief?" in inbox
+    assert main(["--as", "muse", "answer", ask_id, "brief drafted"]) == 0
+    assert main(["--as", "muse", "claim", "brief consolidated", "--ref", f"answer:{ask_id}"]) == 0
+    capsys.readouterr()
+    assert main(["--as", "claude", "inbox", "--ack"]) == 0
+    assert "brief drafted" in capsys.readouterr().out
+    assert main(["asks", "--all"]) == 0
+    assert "(no open asks)" in capsys.readouterr().out
+    assert main(["head"]) == 0
+    assert "brief consolidated" in capsys.readouterr().out
+
+
+def test_mcp_example_configs_match_abus_entrypoint():
+    """examples/mcp/*.json must use abus --as <name> mcp with distinct identities."""
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "examples" / "mcp"
+    expected = {
+        "claude-code.json": "claude",
+        "codex.json": "codex",
+        "cursor.json": "cursor",
+        "muse.json": "muse",
+        "generic-bot.json": "bot",
+    }
+    for name, identity in expected.items():
+        cfg = json.loads((root / name).read_text())
+        server = cfg["mcpServers"]["agentbus"]
+        assert server["command"] == "abus"
+        assert server["args"] == ["--as", identity, "mcp"]
+    snippet = (root.parent / "AGENTS.snippet.md").read_text()
+    assert "abus --as <me> inbox --ack" in snippet
+    assert "Agent coordination (agentbus)" in snippet

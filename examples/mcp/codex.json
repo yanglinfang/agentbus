@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agentbus": {
+      "command": "abus",
+      "args": ["--as", "codex", "mcp"]
+    }
+  }
+}
