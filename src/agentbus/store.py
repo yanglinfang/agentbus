@@ -119,8 +119,9 @@ class Bus:
         bus.lock_path.touch()
         # HEAD.md is derived from the log; committing it only creates churn.
         gi = path / ".gitignore"
-        if not gi.exists():
-            gi.write_text(f"{HEAD}\n")
+        want = f"{HEAD}\n{LOCK}\n"
+        if not gi.exists() or LOCK not in gi.read_text():
+            gi.write_text(want)
         bus.render_head()
         return bus
 

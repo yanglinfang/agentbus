@@ -5,4 +5,4 @@ The store is an append-only JSONL log inside the repo, so `git` is the
 cross-machine transport and the whole history is reviewable.
 """
 
-__version__ = "0.2.4"
+__version__ = "0.2.5"
