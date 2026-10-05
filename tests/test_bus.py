@@ -309,3 +309,11 @@ def test_mcp_example_configs_match_abus_entrypoint():
     snippet = (root.parent / "AGENTS.snippet.md").read_text()
     assert "abus --as <me> inbox --ack" in snippet
     assert "Agent coordination (agentbus)" in snippet
+
+
+def test_unregister_wake(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path); main(["init"])
+    main(["register-wake", "codex", "true"]); capsys.readouterr()
+    assert main(["unregister-wake", "codex"]) == 0
+    assert "removed wake command for codex" in capsys.readouterr().out
+    assert main(["wake", "codex"]) == 2  # nothing registered any more

@@ -146,6 +146,10 @@ class Bus:
         as the agent itself — a live agent and a spawned one must not share a name."""
         cfg = self._config(); cfg.setdefault("wake", {})[agent] = command; self._write_config(cfg)
 
+    def unregister_wake(self, agent: str) -> bool:
+        cfg = self._config(); had = cfg.get("wake", {}).pop(agent, None) is not None
+        self._write_config(cfg); return had
+
     def wake_command(self, agent: str) -> str | None:
         return self._config().get("wake", {}).get(agent)
 

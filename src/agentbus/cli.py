@@ -301,6 +301,14 @@ def cmd_register_wake(args):
     print(f"wake for {args.agent}: {args.command}")
 
 
+def cmd_unregister_wake(args):
+    """Remove an agent's wake command — e.g. when a human restricts participation
+    to that agent's live session and spawned workers must not exist."""
+    bus = _bus(args)
+    had = bus.unregister_wake(args.agent)
+    print(f"{'removed' if had else 'no'} wake command for {args.agent}")
+
+
 def cmd_wake(args):
     """Run an agent's registered wake command, as `<agent>-worker`. The worker
     can read the bus and act, and its posts are visibly its own — it never
@@ -388,6 +396,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sp.add_parser("hook-run", help="(called by editor hooks) show inbox for the per-session identity"); s.add_argument("tool", choices=["claude"]); s.add_argument("--ack", action="store_true"); s.add_argument("--identify", action="store_true", help="always print the identity line, even with an empty inbox"); s.set_defaults(fn=cmd_hook_run)
     s = sp.add_parser("bind-session", help="pin a hook session (id prefix) to an existing identity"); s.add_argument("session_prefix"); s.add_argument("name"); s.set_defaults(fn=cmd_bind_session)
     s = sp.add_parser("register-wake", help="store the shell command that wakes an agent (runs as <agent>-worker)"); s.add_argument("agent"); s.add_argument("command"); s.set_defaults(fn=cmd_register_wake)
+    s = sp.add_parser("unregister-wake", help="remove an agent's wake command"); s.add_argument("agent"); s.set_defaults(fn=cmd_unregister_wake)
     s = sp.add_parser("wake", help="run an agent's registered wake command as <agent>-worker"); s.add_argument("agent"); s.add_argument("--wait", action="store_true"); s.add_argument("--dry-run", action="store_true"); s.set_defaults(fn=cmd_wake)
     sp.add_parser("mcp", help="run the MCP stdio server (needs agent-bus[mcp])").set_defaults(fn=cmd_mcp)
     return p
